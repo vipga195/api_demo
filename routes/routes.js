@@ -1,19 +1,10 @@
 
-const { Client } = require('pg');
+
 
 const dataChatBox = require("../datas/chatbox")
+const client = require("./pool")
 
-const client = new Client({
-    // user: "xwiovmqwszkcyu",
-    // password: "d6b7341da9cc35fc39fad2c8f70fd9dfe5308c54b555c872ab25b26b26df6161",
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: true
-    },
-    max: Infinity,
-    idleTimeoutMillis: 5000
-});
-console.log({ client })
+
 // Router
 const router = app => {
     //GET
@@ -29,7 +20,7 @@ const router = app => {
                 console.log(err);
                 return;
             }
-            client.query('SELECT * FROM table_status', (err, res) => {
+            client.query('SELECT * FROM table_status ORDER BY status_id', (err, res) => {
                 if (err) response.send({ success: false, detail: err });
                 else {
                     const list = []
@@ -51,14 +42,18 @@ const router = app => {
     app.get('/scb_demo/project', (request, response) => {
         let page = request.query.page > 0 ? parseInt(request.query.page) : 1;
         let limit = request.query.limit
-        
+        let project_id = request.query.project_id;
+        let where = ""
+        if (project_id > 0) {
+            where = `WHERE project_id=${project_id}`
+        }
         client.connect(err => {
             if (err) {
                 console.log(err);
                 return;
             }
-            if (limit) {
-                client.query(`SELECT * FROM table_project`, (err, res) => {
+            if (limit || where != "") {
+                client.query(`SELECT * FROM table_project ${where} ORDER BY project_id`, (err, res) => {
                     if (err) response.send({ success: false, detail: err });
                     else {
                         const list = []
@@ -66,20 +61,30 @@ const router = app => {
                             list.push(row)
 
                         }
-
-                        let total_page = list.length / limit > parseInt(list.length / limit) ? parseInt(list.length / limit) + 1 : parseInt(list.length / limit)
                         let params = {
                             detail: list,
                             success: true
                         }
                         response.status(200);
-                        let indexStart = page > 0 ? page - 1 : 0
-                        let indexEnd = page > 0 ? parseInt(page) : 1
-                        params.detail = list.slice(indexStart * limit, (indexEnd * limit) >= list.length ? list.length : indexEnd * limit)
-                        params.total_record = list.length;
-                        params.page = indexEnd
-                        params.total_page = total_page > 0 ? total_page : 1
-
+                        if (limit) {
+                            let total_page = list.length / limit > parseInt(list.length / limit) ? parseInt(list.length / limit) + 1 : parseInt(list.length / limit)
+                            let indexStart = page > 0 ? page - 1 : 0
+                            let indexEnd = page > 0 ? parseInt(page) : 1
+                            params.detail = list.slice(indexStart * limit, (indexEnd * limit) >= list.length ? list.length : indexEnd * limit)
+                            params.total_record = list.length;
+                            params.page = indexEnd
+                            params.total_page = total_page > 0 ? total_page : 1
+                        }
+                        else {
+                            if (list.length == 1) {
+                                params.detail = list[0]
+                            }
+                            else {
+                                params.success = false;
+                                response.status(304);
+                                params.detail = "missing body !!!"
+                            }
+                        }
                         response.send(params);
                     }
                     // client.end();
@@ -91,14 +96,39 @@ const router = app => {
 
         });
     })
+    app.get('/scb_demo/project/filter', (request, response) => {
 
+        client.connect(err => {
+            if (err) {
+                console.log(err);
+                return;
+            }
+            client.query(`SELECT * FROM table_project GROUP BY project_id ORDER BY project_id`, (err, res) => {
+                if (err) response.send({ success: false, detail: err });
+                else {
+                    const list = []
+                    for (let row of res.rows) {
+                        list.push(row)
+
+                    }
+                    let params = {
+                        detail: list,
+                        success: true
+                    }
+                    response.status(200);
+                    response.send(params);
+                }
+                // client.end();
+            })
+        });
+    })
     app.get('/scb_demo/active', (request, response) => {
         client.connect(err => {
             if (err) {
                 console.log(err);
                 return;
             }
-            client.query('SELECT * FROM table_active', (err, res) => {
+            client.query('SELECT * FROM table_active ORDER BY active_id', (err, res) => {
                 if (err) response.send({ success: false, detail: err });
                 else {
                     const list = []
@@ -128,7 +158,7 @@ const router = app => {
                 console.log(err);
                 return;
             }
-            client.query(`SELECT * FROM table_user u ${where}`, (err, res) => {
+            client.query(`SELECT * FROM table_user u ${where} ORDER BY u.user_id`, (err, res) => {
                 if (err) response.send({ success: false, detail: err });
                 else {
                     const list = []
@@ -189,8 +219,8 @@ const router = app => {
     });
 
     app.get('/scb_demo/monitor/list', async (request, response) => {
-        let project = request.query.project;
-        let status = request.query.status;
+        let project = request.query.project_id;
+        let status = request.query.status_id;
         let where = "";
         if (project || status) {
             if (project && status) {
@@ -201,7 +231,8 @@ const router = app => {
                     where = `WHERE m.project_id =${project}`
                 }
                 else {
-                    where = `WHERE m.status_id =${status}`
+                    if (status)
+                        where = `WHERE m.status_id =${status}`
                 }
             }
         }
@@ -226,6 +257,7 @@ const router = app => {
                             LEFT JOIN table_active a ON (a.active_id = m.active_id) 
                             LEFT JOIN table_status s ON (s.status_id = m.status_id) 
                            ${where}
+                           ORDER BY m.monitor_id
                             `,
                 (err, res) => {
                     if (err) response.send({ success: false, detail: err });
@@ -324,7 +356,7 @@ const router = app => {
             }
             else {
                 if (project_id) {
-                    where = `UPDATE table_project SET ${project_status > 0 ? `project_status=${project_status},` : ""} ${project_type > 0 ? `project_type=${project_type},` : ""} ${project_name != "" ? `project_name='${project_name},'` : ""} ${project_url && project_url != '' ? "project_url=" + `'${project_url}'` : "project_url=NULL"} WHERE project_id = ${project_id};`;
+                    where = `UPDATE table_project SET ${project_status > 0 ? `project_status=${project_status},` : ""} ${project_type > 0 ? `project_type=${project_type},` : ""} ${project_name && project_name != "" ? `project_name='${project_name},'` : ""} ${project_url && project_url != '' ? "project_url=" + `'${project_url}'` : ""} WHERE project_id = ${project_id};`;
                 }
                 else {
                     if (project_name != "" && project_type > 0 && project_status > 0 && project_url != "") {
@@ -352,6 +384,37 @@ const router = app => {
                         })
                     })
                 }
+            }
+        }
+    })
+
+    app.post('/scb_demo/project/status', (request, response) => {
+        const { project_id, project_status } = request.body;
+        let where = ""
+        if (!project_status > 0) {
+            response.send({ success: false, detail: "missing project_status" });
+        }
+        else {
+            if (project_id) {
+                where = `UPDATE table_project SET ${project_status > 0 ? `project_status=${project_status}` : ""} WHERE project_id = ${project_id};`;
+            }
+            if (where != "") {
+                client.connect(err => {
+                    if (err) {
+                        console.log(err);
+                        return;
+                    }
+                    client.query(`${where}`, (err, res) => {
+                        if (err) response.send({ success: false, detail: err });
+                        else {
+                            params = {
+                                detail: "update success",
+                                success: true
+                            }
+                            response.send(params);
+                        }
+                    })
+                })
             }
         }
     })
